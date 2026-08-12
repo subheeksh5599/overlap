@@ -4,8 +4,9 @@
 import { baseUrl, listProjects, listSessions, sessionProject, sessionWorktreeDir } from "./ao.js";
 import type { RawSession } from "./ao.js";
 import { changedFiles, isGitRepo, mergeBase } from "./git.js";
-import { detectOverlaps, planMergeOrder } from "./engine.js";
-import type { OverlapAlert, SessionFiles, ProjectInfo } from "./types.js";
+import { detectOverlaps, planMergeOrder, buildReport } from "./engine.js";
+import type { OverlapAlert, SessionFiles, ProjectInfo, MergeRecord } from "./types.js";
+import { readFile } from "fs/promises";
 
 const SEV_LABEL: Record<string, string> = { high: "HIGH", medium: "MEDIUM", low: "LOW" };
 const KIND_LABEL: Record<string, string> = {
@@ -104,13 +105,30 @@ async function cmdWatch(): Promise<void> {
   }
 }
 
+async function cmdReport(mergesPath: string): Promise<void> {
+  let merges: MergeRecord[];
+  try {
+    const content = await readFile(mergesPath, "utf8");
+    merges = JSON.parse(content);
+  } catch (err) {
+    console.error(`Error: failed to read or parse "${mergesPath}": ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+  const lines = buildReport(merges);
+  console.log("Post-merge report:");
+  for (const line of lines) {
+    console.log(line);
+  }
+}
+
 async function main(): Promise<void> {
   const command = process.argv[2];
   try {
     if (command === "status") await cmdStatus();
     else if (command === "watch") await cmdWatch();
+    else if (command === "report") await cmdReport(process.argv[3]);
     else {
-      console.error("Usage: overlap <status|watch>");
+      console.error("Usage: overlap <status|watch|report>");
       process.exit(1);
     }
   } catch (err) {
