@@ -60,8 +60,34 @@ function printAlerts(alerts: OverlapAlert[]): void {
   console.log();
 }
 
-async function cmdStatus(): Promise<void> {
+function printJsonStatus(baseUrl: string, sessions: SessionFiles[], alerts: OverlapAlert[], mergeOrder: string[]): void {
+  const sessionList = sessions.map((s) => ({
+    sessionId: s.sessionId,
+    name: s.name,
+    branch: s.branch,
+    worktreeDir: s.worktreeDir,
+    files: s.files,
+  }));
+  const alertList = alerts.map((a) => ({
+    sessionIds: a.sessionIds,
+    file: a.file,
+    severity: a.severity,
+    kind: a.kind,
+  }));
+  console.log(JSON.stringify({ daemon: baseUrl, sessions: sessionList, alerts: alertList, mergeOrder: mergeOrder }));
+}
+
+async function cmdStatus(json: boolean): Promise<void> {
   const { sessions, projects } = await loadSessions();
+  const alerts = detectOverlaps(sessions);
+
+  if (json) {
+    const order = planMergeOrder(sessions);
+    const mergeOrderIds = order.map((s) => s.sessionId);
+    printJsonStatus(baseUrl, sessions, alerts, mergeOrderIds);
+    return;
+  }
+
   console.log(`=== Overlap ===`);
   console.log(`Daemon: ${baseUrl}`);
   console.log(`Projects: ${projects.map((p) => p.id).join(", ") || "(none)"}`);
@@ -74,7 +100,7 @@ async function cmdStatus(): Promise<void> {
     console.log(`  files:    ${s.files.length ? s.files.join(", ") : "(none)"}\n`);
   }
 
-  printAlerts(detectOverlaps(sessions));
+  printAlerts(alerts);
 
   if (sessions.length >= 2) {
     const order = planMergeOrder(sessions);
@@ -84,7 +110,7 @@ async function cmdStatus(): Promise<void> {
   }
 }
 
-async function cmdWatch(): Promise<void> {
+async function cmdWatch(json: boolean): Promise<void> {
   const seen = new Set<string>();
   console.log(`=== Overlap watch ===`);
   console.log(`Daemon: ${baseUrl} — polling every 5s. Ctrl-C to stop.\n`);
@@ -122,13 +148,18 @@ async function cmdReport(mergesPath: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const command = process.argv[2];
+  // Parse --json flag from any position in process.argv
+  const hasJson = process.argv.includes("--json");
+  // Filter out --json to reliably extract the subcommand
+  const args = process.argv.filter((arg) => arg !== "--json");
+  const command = args[2];
+
   try {
-    if (command === "status") await cmdStatus();
-    else if (command === "watch") await cmdWatch();
-    else if (command === "report") await cmdReport(process.argv[3]);
+    if (command === "status") await cmdStatus(hasJson);
+    else if (command === "watch") await cmdWatch(hasJson);
+    else if (command === "report") await cmdReport(args[3] ?? "");
     else {
-      console.error("Usage: overlap <status|watch|report>");
+      console.error("Usage: overlap <status|watch|report> [--json]");
       process.exit(1);
     }
   } catch (err) {
