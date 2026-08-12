@@ -6,7 +6,7 @@ import type { RawSession } from "./ao.js";
 import { changedFiles, isGitRepo, mergeBase } from "./git.js";
 import { detectOverlaps, planMergeOrder, buildReport } from "./engine.js";
 import type { OverlapAlert, SessionFiles, ProjectInfo, MergeRecord } from "./types.js";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 
 const SEV_LABEL: Record<string, string> = { high: "HIGH", medium: "MEDIUM", low: "LOW" };
 const KIND_LABEL: Record<string, string> = {
@@ -147,6 +147,40 @@ async function cmdReport(mergesPath: string): Promise<void> {
   }
 }
 
+async function cmdExport(outPath: string): Promise<void> {
+  const { sessions } = await loadSessions();
+  const alerts = detectOverlaps(sessions);
+  const order = planMergeOrder(sessions);
+  const mergeOrderIds = order.map((s) => s.sessionId);
+
+  const data = {
+    generatedAt: new Date().toISOString(),
+    daemon: baseUrl,
+    sessions: sessions.map((s) => ({
+      sessionId: s.sessionId,
+      name: s.name,
+      branch: s.branch,
+      worktreeDir: s.worktreeDir,
+      files: s.files,
+    })),
+    alerts: alerts.map((a) => ({
+      sessionIds: a.sessionIds,
+      file: a.file,
+      severity: a.severity,
+      kind: a.kind,
+    })),
+    mergeOrder: mergeOrderIds,
+  };
+
+  try {
+    await writeFile(outPath, JSON.stringify(data, null, 2));
+    console.log(`wrote ${outPath}`);
+  } catch (err) {
+    console.error(`Error: failed to write "${outPath}": ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   // Parse --json flag from any position in process.argv
   const hasJson = process.argv.includes("--json");
@@ -158,8 +192,9 @@ async function main(): Promise<void> {
     if (command === "status") await cmdStatus(hasJson);
     else if (command === "watch") await cmdWatch(hasJson);
     else if (command === "report") await cmdReport(args[3] ?? "");
+    else if (command === "export") await cmdExport(args[3] ?? "");
     else {
-      console.error("Usage: overlap <status|watch|report> [--json]");
+      console.error("Usage: overlap <status|watch|report|export> [--json]");
       process.exit(1);
     }
   } catch (err) {
