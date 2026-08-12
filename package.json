@@ -1,0 +1,11 @@
+{
+  "name": "overlap",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "build": "npm run build -w @overlap/core && npm run build -w dashboard",
+    "test": "npm test -w @overlap/core",
+    "dev:dashboard": "npm run dev -w dashboard",
+    "cli": "npm run cli -w @overlap/core"
+  }
+}
