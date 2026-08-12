@@ -33,6 +33,8 @@ apps/dashboard          Next.js app — landing + radar dashboard on one URL
 ## Quickstart
 
 ```bash
+git clone https://github.com/subheeksh5599/overlap.git
+cd overlap
 npm install
 npm run build          # core + dashboard
 npm test               # engine unit tests (node:test)
