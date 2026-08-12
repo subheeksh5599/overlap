@@ -152,11 +152,36 @@ export default function Dashboard() {
               <p className="empty">Need at least two sessions with worktrees to plan a merge order.</p>
             ) : (
               <ol className="order">
-                {state.mergeOrder.map((item) => (
-                  <li key={item} className="mono">
-                    {item}
-                  </li>
-                ))}
+                {state.mergeOrder.map((sessionId, i) => {
+                  const session = state.sessions.find((s) => s.sessionId === sessionId);
+                  if (!session) {
+                    return (
+                      <li key={sessionId} className="mono">
+                        {sessionId}
+                      </li>
+                    );
+                  }
+                  // Count files from this session that also appear in any later session
+                  let sharedCount = 0;
+                  for (let j = i + 1; j < state.mergeOrder.length; j++) {
+                    const laterSession = state.sessions.find(
+                      (s) => s.sessionId === state.mergeOrder[j],
+                    );
+                    if (!laterSession) continue;
+                    const currentFileSet = new Set(session.files);
+                    for (const f of laterSession.files) {
+                      if (currentFileSet.has(f)) {
+                        sharedCount++;
+                        currentFileSet.delete(f);
+                      }
+                    }
+                  }
+                  return (
+                    <li key={sessionId} className="mono">
+                      {session.name} ({sharedCount} shared)
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </div>
