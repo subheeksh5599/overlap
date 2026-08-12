@@ -77,7 +77,7 @@ function printJsonStatus(baseUrl: string, sessions: SessionFiles[], alerts: Over
   console.log(JSON.stringify({ daemon: baseUrl, sessions: sessionList, alerts: alertList, mergeOrder: mergeOrder }));
 }
 
-async function cmdStatus(json: boolean): Promise<void> {
+async function cmdStatus(json: boolean, stats: boolean): Promise<void> {
   const { sessions, projects } = await loadSessions();
   const alerts = detectOverlaps(sessions);
 
@@ -107,6 +107,13 @@ async function cmdStatus(json: boolean): Promise<void> {
     console.log("Suggested merge order (least shared files first):");
     order.forEach((s, i) => console.log(`  ${i + 1}. ${s.name} (${s.branch})`));
     console.log();
+  }
+
+  if (stats) {
+    const totalFiles = sessions.reduce((sum, s) => sum + s.files.length, 0);
+    console.log(`Sessions: ${sessions.length}`);
+    console.log(`Files tracked: ${totalFiles}`);
+    console.log(`Alerts: ${alerts.length}`);
   }
 }
 
@@ -182,19 +189,22 @@ async function cmdExport(outPath: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Parse --json flag from any position in process.argv
+  // Parse --json and --stats flags from any position in process.argv
   const hasJson = process.argv.includes("--json");
-  // Filter out --json to reliably extract the subcommand
-  const args = process.argv.filter((arg) => arg !== "--json");
+  const hasStats = process.argv.includes("--stats");
+  // Filter out --json and --stats to reliably extract the subcommand
+  const args = process.argv.filter(
+    (arg) => arg !== "--json" && arg !== "--stats",
+  );
   const command = args[2];
 
   try {
-    if (command === "status") await cmdStatus(hasJson);
+    if (command === "status") await cmdStatus(hasJson, hasStats);
     else if (command === "watch") await cmdWatch(hasJson);
     else if (command === "report") await cmdReport(args[3] ?? "");
     else if (command === "export") await cmdExport(args[3] ?? "");
     else {
-      console.error("Usage: overlap <status|watch|report|export> [--json]");
+      console.error("Usage: overlap <status|watch|report|export> [--json] [--stats]");
       process.exit(1);
     }
   } catch (err) {
