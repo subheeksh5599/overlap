@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // demo-b2 radar scene
+// demo-a2 radar scene
 /* cli.ts — bin `overlap`: status, watch, report, export, route. */
 
 import { readFile, writeFile } from "fs/promises";
@@ -50,7 +51,10 @@ async function loadSessions(projectFilter = ""): Promise<LoadedSessions> {
       continue;
     }
     if (!(await isGitRepo(worktreeDir))) continue;
-    const base = await mergeBase(project.path);
+    // Merge base against origin/main computed IN the worktree: this is the
+    // branch's true fork point. Using the main checkout's HEAD instead makes
+    // every branch look like it changed files main added after it forked.
+    const base = await mergeBase(worktreeDir);
     const files = await changedFiles(worktreeDir, base);
     const session: SessionFiles = {
       sessionId: s.id,
