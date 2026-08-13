@@ -1,5 +1,5 @@
-// demo-b2 radar scene
 #!/usr/bin/env node
+// demo-b2 radar scene
 /* cli.ts — bin `overlap`: status, watch, report, export, route. */
 
 import { readFile, writeFile } from "fs/promises";
