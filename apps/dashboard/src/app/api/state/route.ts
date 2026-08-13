@@ -48,7 +48,8 @@ export async function GET(): Promise<NextResponse<ApiState>> {
       const worktreeDir = sessionWorktreeDir(s);
       if (!project || !worktreeDir) continue;
       if (!(await isGitRepo(worktreeDir))) continue;
-      const base = await mergeBase(project.path);
+      // Merge base computed in the worktree = true fork point of the branch.
+      const base = await mergeBase(worktreeDir);
       const files = await changedFiles(worktreeDir, base);
       const session: ApiSession = {
         sessionId: s.id,

@@ -45,8 +45,9 @@ interface RawPr {
   number?: number;
   state?: string;
   htmlUrl?: string;
-  ci?: RawPrCi;
-  mergeability?: { state?: string };
+  /** The daemon returns ci/mergeability as flat strings; keep object shape working too. */
+  ci?: string | RawPrCi;
+  mergeability?: string | { state?: string };
 }
 
 export interface RawSession {
@@ -62,27 +63,31 @@ export interface RawSession {
   [key: string]: unknown;
 }
 
+function ciStateOf(pr: RawPr): CiState {
+  const raw = pr.ci;
+  const v = typeof raw === "string" ? raw : raw?.state;
+  return v === "passing" || v === "failing" || v === "pending" ? v : "unknown";
+}
+
+function mergeabilityOf(pr: RawPr): MergeabilityState {
+  const raw = pr.mergeability;
+  const v = typeof raw === "string" ? raw : raw?.state;
+  return v === "mergeable" || v === "conflicting" || v === "blocked" || v === "unstable" ? v : "unknown";
+}
+
 /** Map the daemon's first observed PR for a session into PrInfo (defensive). */
 export function sessionPr(session: RawSession): PrInfo | null {
   const pr = session.prs?.[0];
   if (!pr) return null;
-  const ci: CiState =
-    pr.ci?.state === "passing" || pr.ci?.state === "failing" || pr.ci?.state === "pending"
-      ? pr.ci.state
-      : "unknown";
-  const mergeability: MergeabilityState =
-    pr.mergeability?.state === "mergeable" ||
-    pr.mergeability?.state === "conflicting" ||
-    pr.mergeability?.state === "blocked" ||
-    pr.mergeability?.state === "unstable"
-      ? pr.mergeability.state
-      : "unknown";
+  const ci = ciStateOf(pr);
+  const mergeability = mergeabilityOf(pr);
+  const failingChecksRaw = typeof pr.ci === "string" ? undefined : pr.ci?.failingChecks;
   return {
     number: pr.number ?? 0,
     state: pr.state ?? "open",
     url: pr.htmlUrl ?? "",
     ci,
-    failingChecks: (pr.ci?.failingChecks ?? [])
+    failingChecks: (failingChecksRaw ?? [])
       .filter((c) => c?.name)
       .map((c) => ({ name: c.name!, url: c.url ?? "" })),
     mergeability,
