@@ -11,7 +11,7 @@
  */
 
 import { existsSync } from "fs";
-import { homedir } from "os";
+import { homedir, userInfo } from "os";
 import { join } from "path";
 import type { CiState, MergeabilityState, PrInfo, ProjectInfo } from "./types.js";
 
@@ -20,6 +20,19 @@ export const baseUrl = (process.env.AO_DAEMON_URL || DEFAULT_BASE_URL).replace(/
 
 export function defaultDataDir(): string {
   return process.env.AO_DATA_DIR || join(homedir(), ".ao");
+}
+
+/**
+ * The passwd entry home, independent of $HOME. AO session shells (chat
+ * agents) run with a sandboxed $HOME, which would point worktree derivation
+ * at a nonexistent path; the passwd home is the real user home.
+ */
+function realUserHome(): string {
+  try {
+    return userInfo().homedir || homedir();
+  } catch {
+    return homedir();
+  }
 }
 
 export class DaemonError extends Error {
@@ -109,8 +122,14 @@ export async function listProjects(): Promise<ProjectInfo[]> {
 /** Derive the worktree directory for a session, if it exists on disk. */
 export function sessionWorktreeDir(session: RawSession, dataDir = defaultDataDir()): string {
   if (!session.projectId || !session.id) return "";
-  const dir = join(dataDir, "data", "worktrees", session.projectId, session.id);
-  return existsSync(dir) ? dir : "";
+  const candidate = (dir: string) => join(dir, "data", "worktrees", session.projectId, session.id);
+  const envPath = candidate(dataDir);
+  if (existsSync(envPath)) return envPath;
+  // Fall back to the passwd home: AO chat-agent shells can carry a sandboxed
+  // $HOME, which would otherwise hide every worktree from the radar.
+  const realPath = candidate(join(realUserHome(), ".ao"));
+  if (realPath !== envPath && existsSync(realPath)) return realPath;
+  return "";
 }
 
 /** Map a session to its project info (for the repo path / merge-base). */
