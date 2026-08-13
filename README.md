@@ -6,7 +6,7 @@
 
 [![Live demo](https://img.shields.io/badge/●_live-dashboard--six--fawn--62.vercel.app-34d399)](https://dashboard-six-fawn-62.vercel.app)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-34d399.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-11%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-24%20passing-3fb950)
 ![Stack](https://img.shields.io/badge/Next.js%20·%20React%2019%20·%20TypeScript-1f1f23)
 ![AO](https://img.shields.io/badge/Agent%20Orchestrator-native-5865F2)
 
