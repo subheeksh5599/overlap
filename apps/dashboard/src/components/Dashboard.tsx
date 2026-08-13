@@ -11,6 +11,15 @@ interface ApiState {
     worktreeDir: string;
     branch: string;
     files: string[];
+    projectId?: string;
+    pr?: {
+      number: number;
+      state: string;
+      url: string;
+      ci: "unknown" | "pending" | "passing" | "failing";
+      mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+      failingChecks: { name: string; url: string }[];
+    } | null;
     harness?: string;
     status?: string;
   }[];
@@ -19,6 +28,9 @@ interface ApiState {
     file: string;
     severity: "high" | "medium" | "low";
     kind: string;
+    ci?: "unknown" | "pending" | "passing" | "failing";
+    mergeability?: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+    importer?: string | null;
   }[];
   mergeOrder: string[];
   generatedAt: string;
@@ -30,6 +42,13 @@ const KIND_LABEL: Record<string, string> = {
   "same-file": "SAME FILE",
   "same-dir": "SAME DIRECTORY",
   "same-module": "SAME MODULE",
+  "dep-import": "DEP IMPORT",
+};
+const CI_BADGE: Record<string, string> = { failing: "ci failing", pending: "ci pending" };
+const MERGE_BADGE: Record<string, string> = {
+  conflicting: "merge conflicting",
+  blocked: "merge blocked",
+  unstable: "merge unstable",
 };
 
 export default function Dashboard() {
@@ -90,9 +109,11 @@ export default function Dashboard() {
                 <thead>
                   <tr>
                     <th>session</th>
+                    <th>project</th>
                     <th>harness</th>
                     <th>status</th>
                     <th>branch</th>
+                    <th>pr</th>
                     <th>files</th>
                   </tr>
                 </thead>
@@ -103,9 +124,27 @@ export default function Dashboard() {
                         <strong>{s.name}</strong>
                         <div className="mono">{s.sessionId}</div>
                       </td>
+                      <td className="mono">{s.projectId || "—"}</td>
                       <td>{s.harness || "—"}</td>
                       <td>{s.status || "—"}</td>
                       <td className="mono">{s.branch}</td>
+                      <td>
+                        {s.pr && s.pr.number > 0 ? (
+                          <>
+                            <span className="mono">
+                              <a href={s.pr.url} target="_blank" rel="noreferrer">
+                                #{s.pr.number}
+                              </a>
+                            </span>{" "}
+                            {s.pr.ci !== "unknown" && <span className="badge ci">{s.pr.ci}</span>}
+                            {s.pr.mergeability === "conflicting" && (
+                              <span className="badge high">conflicting</span>
+                            )}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td>
                         <div className="filelist">{s.files.length ? s.files.join("\n") : "(none)"}</div>
                       </td>
@@ -128,6 +167,7 @@ export default function Dashboard() {
                     <th>kind</th>
                     <th>file / dir / module</th>
                     <th>sessions</th>
+                    <th>context</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -137,8 +177,24 @@ export default function Dashboard() {
                         <span className={`badge ${a.severity}`}>{SEV_LABEL[a.severity]}</span>
                       </td>
                       <td>{KIND_LABEL[a.kind] || a.kind}</td>
-                      <td className="mono">{a.file}</td>
+                      <td className="mono">
+                        {a.file}
+                        {a.importer ? (
+                          <div className="meta">imported by {a.importer}</div>
+                        ) : null}
+                      </td>
                       <td className="mono">{a.sessionIds.join(", ")}</td>
+                      <td>
+                        {(a.ci && CI_BADGE[a.ci]) || (a.mergeability && MERGE_BADGE[a.mergeability]) ? (
+                          <span className="badge warn">
+                            {[a.ci ? CI_BADGE[a.ci] : "", a.mergeability ? MERGE_BADGE[a.mergeability] : ""]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

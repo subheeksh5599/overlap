@@ -125,6 +125,7 @@ Deterministic rules, no LLM:
 |---|---|---|
 | high | same-file | the same path is touched by 2+ sessions |
 | medium | same-dir | 2+ sessions touch files in the same directory, no same-file alert there |
+| medium | dep-import | a session's changed file imports a module another session is editing (path-level import graph) |
 | low | same-module | the same basename appears in 2+ sessions in different directories, no same-file alert on it |
 
 ### 4 · Plan — merge order
@@ -303,10 +304,10 @@ overlap/
 
 ## Roadmap
 
-- **Semantic overlap** — module-level analysis beyond paths (import graph) to catch same-file edits that don't collide and module edits that do
-- **Automated fix routing** — when the radar flags a collision, hand the resolution task back to the least-loaded session automatically
-- **CI-aware alerts** — pair overlap alerts with check-run state so "collides AND failing" outranks "collides but green"
-- **Multi-project view** — aggregate the radar across every registered AO project
+- **Semantic overlap** — *implemented (v1)*: path-level import-graph analysis (`dep-import` alerts). When session A's changed file imports a module session B is editing, the radar flags it as a medium alert — module edits that do collide, beyond plain paths. Package imports and tsconfig aliases are intentionally out of scope (a dep edge is only claimed when provable from the path).
+- **Automated fix routing** — *implemented (v1)*: `overlap route` picks the least-loaded session involved in alerts (fewest touched files) and emits a deterministic resolution task — rebase, resolve the flagged files, rebuild, re-run tests — ready to paste into the AO session.
+- **CI-aware alerts** — *implemented*: the radar reads the AO daemon's per-session PR facts (`prs[].ci`, `prs[].mergeability`, failing checks) and ranks alerts so "collides AND CI failing" outranks "collides but green"; the CLI prints `[CI FAILING]` / `[MERGE CONFLICTING]` badges and the dashboard shows the same context.
+- **Multi-project view** — *implemented*: sessions carry `projectId`, `status` output groups by project, and `--project <id>` filters status / watch / export / route to a single registered AO project.
 
 ---
 

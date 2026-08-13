@@ -1,6 +1,6 @@
 /* engine.ts — pure deterministic overlap engine, no LLM calls. */
 
-import type { MergeRecord, OverlapAlert, SessionFiles } from "./types.js";
+import type { CiState, ImportGraph, MergeabilityState, MergeRecord, OverlapAlert, SessionFiles } from "./types.js";
 
 function fileDir(file: string): string {
   const lastSep = file.lastIndexOf("/");
@@ -17,6 +17,52 @@ function keyOf(sessionIds: string[]): string {
   return Array.from(new Set(sessionIds)).sort().join(",");
 }
 
+const EXT_RE = /\.(tsx?|jsx?|mjs|cjs|json)$/;
+function extless(p: string): string {
+  return p.replace(EXT_RE, "");
+}
+
+/* --- CI / mergeability context ---------------------------------------- */
+
+const CI_RANK: Record<CiState, number> = { failing: 0, pending: 1, passing: 2, unknown: 3 };
+const MERGE_RANK: Record<MergeabilityState, number> = {
+  conflicting: 0,
+  blocked: 1,
+  unstable: 2,
+  mergeable: 3,
+  unknown: 4,
+};
+
+function sessionCi(s: SessionFiles): CiState {
+  return s.pr?.ci ?? "unknown";
+}
+
+function sessionMergeability(s: SessionFiles): MergeabilityState {
+  return s.pr?.mergeability ?? "unknown";
+}
+
+/** Worst state across the involved sessions: failing beats pending beats passing. */
+export function worstCi(sessions: SessionFiles[], ids: string[]): CiState {
+  const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
+  let worst: CiState = "unknown";
+  for (const id of ids) {
+    const ci = byId.get(id) ? sessionCi(byId.get(id)!) : "unknown";
+    if (CI_RANK[ci] < CI_RANK[worst]) worst = ci;
+  }
+  return worst;
+}
+
+/** Worst mergeability across the involved sessions: conflicting beats blocked. */
+export function worstMergeability(sessions: SessionFiles[], ids: string[]): MergeabilityState {
+  const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
+  let worst: MergeabilityState = "unknown";
+  for (const id of ids) {
+    const m = byId.get(id) ? sessionMergeability(byId.get(id)!) : "unknown";
+    if (MERGE_RANK[m] < MERGE_RANK[worst]) worst = m;
+  }
+  return worst;
+}
+
 /**
  * Detect overlap alerts across sessions.
  *
@@ -27,8 +73,15 @@ function keyOf(sessionIds: string[]): string {
  *   low    same-module — the same basename appears in 2+ sessions in
  *                        different directories, with no same-file alert
  *                        on that basename
+ *   medium dep-import  — a session's changed file imports a module another
+ *                        session is editing (path-level import graph, v1)
+ *
+ * Every alert carries the worst CI state and mergeability among the
+ * sessions involved, and ordering is: severity, then CI (failing first),
+ * then mergeability (conflicting first), then file, then session key —
+ * fully deterministic.
  */
-export function detectOverlaps(sessions: SessionFiles[]): OverlapAlert[] {
+export function detectOverlaps(sessions: SessionFiles[], imports: ImportGraph = {}): OverlapAlert[] {
   const active = sessions.filter((s) => s.files.length > 0);
   const alerts: OverlapAlert[] = [];
 
@@ -45,7 +98,14 @@ export function detectOverlaps(sessions: SessionFiles[]): OverlapAlert[] {
     if (ids.size >= 2) {
       const key = keyOf(Array.from(ids));
       highFiles.set(file, key);
-      alerts.push({ sessionIds: Array.from(ids), file, severity: "high", kind: "same-file" });
+      alerts.push({
+        sessionIds: Array.from(ids),
+        file,
+        severity: "high",
+        kind: "same-file",
+        ci: worstCi(sessions, Array.from(ids)),
+        mergeability: worstMergeability(sessions, Array.from(ids)),
+      });
     }
   }
 
@@ -64,7 +124,14 @@ export function detectOverlaps(sessions: SessionFiles[]): OverlapAlert[] {
   }
   for (const [dir, ids] of dirToSessions) {
     if (ids.size >= 2 && !dirHasHigh.get(dir)) {
-      alerts.push({ sessionIds: Array.from(ids), file: dir, severity: "medium", kind: "same-dir" });
+      alerts.push({
+        sessionIds: Array.from(ids),
+        file: dir,
+        severity: "medium",
+        kind: "same-dir",
+        ci: worstCi(sessions, Array.from(ids)),
+        mergeability: worstMergeability(sessions, Array.from(ids)),
+      });
     }
   }
 
@@ -87,16 +154,71 @@ export function detectOverlaps(sessions: SessionFiles[]): OverlapAlert[] {
     const allIds = new Set<string>();
     for (const ids of dirMap.values()) for (const id of ids) allIds.add(id);
     if (allIds.size >= 2) {
-      alerts.push({ sessionIds: Array.from(allIds), file: base, severity: "low", kind: "same-module" });
+      alerts.push({
+        sessionIds: Array.from(allIds),
+        file: base,
+        severity: "low",
+        kind: "same-module",
+        ci: worstCi(sessions, Array.from(allIds)),
+        mergeability: worstMergeability(sessions, Array.from(allIds)),
+      });
     }
   }
 
-  // Stable ordering: severity desc, then file, then sessions — deterministic output.
+  // --- dep-import (medium): session A edits a module session B imports ---
+  const changedBySession = new Map<string, Set<string>>(); // sessionId -> extless changed paths
+  const extlessToFile = new Map<string, string>(); // extless -> canonical path (first seen, sorted)
+  for (const s of active) {
+    const set = new Set<string>();
+    for (const f of new Set(s.files)) {
+      const el = extless(f);
+      set.add(el);
+      if (!extlessToFile.has(el)) extlessToFile.set(el, f);
+    }
+    changedBySession.set(s.sessionId, set);
+  }
+  const depKeys = new Set<string>(); // dedupe: `${moduleKey}|${sessionKey}`
+  for (const s of active) {
+    const sessionEdges = imports[s.sessionId] ?? {};
+    for (const [fromFile, deps] of Object.entries(sessionEdges)) {
+      for (const dep of deps) {
+        // Which OTHER sessions edit a file matching this dependency?
+        for (const [otherId, otherPaths] of changedBySession) {
+          if (otherId === s.sessionId) continue;
+          if (!otherPaths.has(dep)) continue;
+          // Skip when the same-file alert already covers this module.
+          const canonical = extlessToFile.get(dep)!;
+          if (highFiles.has(canonical)) continue;
+          const ids = [s.sessionId, otherId];
+          const key = `${dep}|${keyOf(ids)}`;
+          if (depKeys.has(key)) continue;
+          depKeys.add(key);
+          alerts.push({
+            sessionIds: ids,
+            file: canonical,
+            severity: "medium",
+            kind: "dep-import",
+            importer: fromFile,
+            ci: worstCi(sessions, ids),
+            mergeability: worstMergeability(sessions, ids),
+          });
+        }
+      }
+    }
+  }
+
+  // Stable ordering: severity, then CI, then mergeability, then file, then sessions.
   const severityRank = { high: 0, medium: 1, low: 2 } as const;
   alerts.sort((a, b) => {
     if (severityRank[a.severity] !== severityRank[b.severity]) {
       return severityRank[a.severity] - severityRank[b.severity];
     }
+    const aCi = CI_RANK[a.ci ?? "unknown"];
+    const bCi = CI_RANK[b.ci ?? "unknown"];
+    if (aCi !== bCi) return aCi - bCi;
+    const aM = MERGE_RANK[a.mergeability ?? "unknown"];
+    const bM = MERGE_RANK[b.mergeability ?? "unknown"];
+    if (aM !== bM) return aM - bM;
     if (a.file !== b.file) return a.file < b.file ? -1 : 1;
     return keyOf(a.sessionIds) < keyOf(b.sessionIds) ? -1 : 1;
   });
@@ -135,6 +257,18 @@ export function planMergeOrder(sessions: SessionFiles[]): SessionFiles[] {
     remaining.delete(session.sessionId);
   }
   return ordered;
+}
+
+/**
+ * Least-loaded session: fewest touched files (tie-break: alphabetical name).
+ * Used by `overlap route` to pick the session that should resolve a collision.
+ */
+export function leastLoadedSession(sessions: SessionFiles[]): SessionFiles | null {
+  if (sessions.length === 0) return null;
+  return sessions.reduce((a, b) => {
+    if (a.files.length !== b.files.length) return a.files.length < b.files.length ? a : b;
+    return a.name < b.name ? a : b;
+  });
 }
 
 /** Build report lines summarizing which sessions collided on which files. */

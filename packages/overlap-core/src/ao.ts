@@ -13,7 +13,7 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ProjectInfo } from "./types.js";
+import type { CiState, MergeabilityState, PrInfo, ProjectInfo } from "./types.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3001";
 export const baseUrl = (process.env.AO_DAEMON_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -36,7 +36,20 @@ async function getJson<T>(path: string): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-interface RawSession {
+interface RawPrCi {
+  state?: string;
+  failingChecks?: { name?: string; url?: string }[];
+}
+
+interface RawPr {
+  number?: number;
+  state?: string;
+  htmlUrl?: string;
+  ci?: RawPrCi;
+  mergeability?: { state?: string };
+}
+
+export interface RawSession {
   id: string;
   projectId: string;
   displayName?: string;
@@ -44,7 +57,36 @@ interface RawSession {
   branch?: string;
   status?: string;
   harness?: string;
+  /** PR facts observed by the AO daemon's SCM observer. */
+  prs?: RawPr[];
   [key: string]: unknown;
+}
+
+/** Map the daemon's first observed PR for a session into PrInfo (defensive). */
+export function sessionPr(session: RawSession): PrInfo | null {
+  const pr = session.prs?.[0];
+  if (!pr) return null;
+  const ci: CiState =
+    pr.ci?.state === "passing" || pr.ci?.state === "failing" || pr.ci?.state === "pending"
+      ? pr.ci.state
+      : "unknown";
+  const mergeability: MergeabilityState =
+    pr.mergeability?.state === "mergeable" ||
+    pr.mergeability?.state === "conflicting" ||
+    pr.mergeability?.state === "blocked" ||
+    pr.mergeability?.state === "unstable"
+      ? pr.mergeability.state
+      : "unknown";
+  return {
+    number: pr.number ?? 0,
+    state: pr.state ?? "open",
+    url: pr.htmlUrl ?? "",
+    ci,
+    failingChecks: (pr.ci?.failingChecks ?? [])
+      .filter((c) => c?.name)
+      .map((c) => ({ name: c.name!, url: c.url ?? "" })),
+    mergeability,
+  };
 }
 
 /** List active (non-terminated) sessions. Handles both envelope shapes. */
@@ -71,4 +113,3 @@ export function sessionProject(session: RawSession, projects: ProjectInfo[]): Pr
   return projects.find((p) => p.id === session.projectId);
 }
 
-export type { RawSession };
