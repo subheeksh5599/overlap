@@ -1,3 +1,4 @@
+// demo-b2 radar scene
 #!/usr/bin/env node
 /* cli.ts — bin `overlap`: status, watch, report, export, route. */
 
