@@ -1,3 +1,4 @@
+// demo-a2 module scene
 /* engine.ts — pure deterministic overlap engine, no LLM calls. */
 
 import type { CiState, ImportGraph, MergeabilityState, MergeRecord, OverlapAlert, SessionFiles } from "./types.js";
