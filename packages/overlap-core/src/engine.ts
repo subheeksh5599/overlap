@@ -64,6 +64,16 @@ export function worstMergeability(sessions: SessionFiles[], ids: string[]): Merg
   return worst;
 }
 
+/** True when any range in a overlaps any range in b (inclusive). */
+function rangesOverlap(a: [number, number][], b: [number, number][]): boolean {
+  for (const [as, ae] of a) {
+    for (const [bs, be] of b) {
+      if (as <= be && bs <= ae) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Detect overlap alerts across sessions.
  *
@@ -86,7 +96,7 @@ export function detectOverlaps(sessions: SessionFiles[], imports: ImportGraph = 
   const active = sessions.filter((s) => s.files.length > 0);
   const alerts: OverlapAlert[] = [];
 
-  // --- same-file (high) ---
+  // --- same-file (high, region-aware) ---
   const fileToSessions = new Map<string, Set<string>>();
   for (const s of active) {
     for (const f of new Set(s.files)) {
@@ -95,19 +105,41 @@ export function detectOverlaps(sessions: SessionFiles[], imports: ImportGraph = 
     }
   }
   const highFiles = new Map<string, string>(); // file -> session key
-  for (const [file, ids] of fileToSessions) {
-    if (ids.size >= 2) {
-      const key = keyOf(Array.from(ids));
-      highFiles.set(file, key);
-      alerts.push({
-        sessionIds: Array.from(ids),
-        file,
-        severity: "high",
-        kind: "same-file",
-        ci: worstCi(sessions, Array.from(ids)),
-        mergeability: worstMergeability(sessions, Array.from(ids)),
-      });
+  for (const [file, idsSet] of fileToSessions) {
+    if (idsSet.size < 2) continue;
+    const ids = Array.from(idsSet);
+    // Region-aware: same-file is a real collision only when the changed line
+    // regions overlap. Disjoint regions (different parts of the file) are
+    // downgraded to low. When hunks are unavailable, assume the worst (high).
+    const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
+    let regions: boolean | null = null;
+    let allKnown = true;
+    outer: for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = byId.get(ids[i])?.hunks?.[file];
+        const b = byId.get(ids[j])?.hunks?.[file];
+        if (!a || !b || a.length === 0 || b.length === 0) {
+          allKnown = false;
+          continue;
+        }
+        if (rangesOverlap(a, b)) {
+          regions = true;
+          break outer;
+        }
+      }
     }
+    if (regions === null && allKnown) regions = false;
+    const key = keyOf(ids);
+    highFiles.set(file, key);
+    alerts.push({
+      sessionIds: ids,
+      file,
+      severity: regions === false ? "low" : "high",
+      kind: "same-file",
+      regions,
+      ci: worstCi(sessions, ids),
+      mergeability: worstMergeability(sessions, ids),
+    });
   }
 
   // --- same-dir (medium) ---

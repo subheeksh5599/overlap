@@ -6,7 +6,7 @@
 
 [![Live demo](https://img.shields.io/badge/●_live-dashboard--six--fawn--62.vercel.app-34d399)](https://dashboard-six-fawn-62.vercel.app)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-34d399.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-24%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-30%20passing-3fb950)
 ![Stack](https://img.shields.io/badge/Next.js%20·%20React%2019%20·%20TypeScript-1f1f23)
 ![AO](https://img.shields.io/badge/Agent%20Orchestrator-native-5865F2)
 
@@ -123,9 +123,10 @@ Deterministic rules, no LLM:
 
 | Severity | Kind | Rule |
 |---|---|---|
-| high | same-file | the same path is touched by 2+ sessions |
+| high | same-file | the same path is touched by 2+ sessions **with overlapping changed line regions** (region-aware via git hunks) |
 | medium | same-dir | 2+ sessions touch files in the same directory, no same-file alert there |
 | medium | dep-import | a session's changed file imports a module another session is editing (path-level import graph) |
+| low | same-file-regions | the same file is touched by 2+ sessions but the changed regions are disjoint — flagged low, not high |
 | low | same-module | the same basename appears in 2+ sessions in different directories, no same-file alert on it |
 
 Every alert also carries the **worst CI state and mergeability among the sessions involved**, read from the daemon's per-session PR facts — so "collides AND CI failing" outranks "collides but green", and the CLI prints `[CI FAILING]` / `[MERGE CONFLICTING]` badges:
@@ -222,7 +223,7 @@ The radar picks the least-loaded session involved in an alert (fewest touched fi
 
 | Feature | Status | Detail |
 |---|---|---|
-| Overlap detection | ✅ Real | high/medium/low rules incl. dep-import, 24 unit tests |
+| Overlap detection | ✅ Real | high/medium/low rules incl. dep-import + region-aware same-file, 30 unit tests |
 | CLI (`status`/`watch`/`report`, `--json`) | ✅ Real | verified live against the daemon |
 | Merge-order planner | ✅ Real | used for the real merge sequence in the build |
 | Reviewer confirmation | ✅ Real | a reviewer session confirmed the cli.ts collision the radar predicted |
@@ -232,14 +233,14 @@ The radar picks the least-loaded session involved in an alert (fewest touched fi
 | Multi-project (`--project`) | ✅ Real | status / watch / export / route scoped to one registered AO project |
 | Live dashboard | ✅ Real | deployed; `/api/state` reads the real daemon (honest error when it's down) |
 | Fresh-clone build | ✅ Real | `npm install && npm run build && npm test` verified on a clean clone |
-| Conflict *prediction* | ⚠️ Path-level | overlap detection is path + import-graph heuristics, not full semantic analysis — two agents editing different parts of the same file still count as a collision |
+| Conflict *prediction* | ✅ Region-aware | same-file alerts compare git hunk line ranges: overlapping regions stay HIGH, disjoint regions downgrade to LOW. Remaining caveat: adjacent-context edits can still collide at merge time |
 | Daemon API stability | ⚠️ Internal | the AO `/api/v1` surface may change between AO releases |
 
 ---
 
 ## Tests
 
-24/24 passing — `node:test` over two suites: the engine (detection rules, dedup, planner, report builder) and the roadmap features (dep-import, CI-aware ranking, fix routing, import extraction). Full output:
+30/30 passing — `node:test` over two suites: the engine (detection rules, dedup, planner, report builder) and the roadmap features (dep-import, CI-aware ranking, fix routing, import extraction). Full output:
 
 ```
 ✔ detectOverlaps: same file touched by two sessions -> high same-file
@@ -266,6 +267,12 @@ The radar picks the least-loaded session involved in an alert (fewest touched fi
 ✔ detectOverlaps: mergeability conflicting outranks mergeable at equal CI
 ✔ worstCi / worstMergeability: worst-of across sessions
 ✔ leastLoadedSession: fewest files, then name
+✔ parseHunks: parses unified=0 hunks into new-side ranges
+✔ mergeRanges: merges overlapping and adjacent ranges
+✔ detectOverlaps: same file with overlapping regions -> high same-file
+✔ detectOverlaps: same file with disjoint regions -> low same-file
+✔ detectOverlaps: any overlapping pair keeps same-file high across 3 sessions
+✔ detectOverlaps: missing hunks still assume the worst (high)
 ```
 
 ---
@@ -325,7 +332,7 @@ The project is configured as a monorepo: `buildCommand: npm run build`, `outputD
 overlap/
 ├── packages/overlap-core/
 │   ├── src/                   # ao.ts, git.ts, engine.ts, imports.ts, cli.ts, index.ts, types.ts
-│   └── test/                  # engine.test.js + roadmap.test.js (node:test, 24 tests)
+│   └── test/                  # engine.test.js + roadmap.test.js (node:test, 30 tests)
 ├── apps/dashboard/
 │   └── src/
 │       ├── app/               # page.tsx (landing + radar), api/state/route.ts

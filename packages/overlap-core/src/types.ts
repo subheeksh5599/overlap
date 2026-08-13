@@ -27,6 +27,8 @@ export interface SessionFiles {
   projectId?: string;
   /** PR facts from the AO daemon, when the session has an open PR. */
   pr?: PrInfo | null;
+  /** Changed line ranges per file (new-side, inclusive) — for region-aware same-file detection. */
+  hunks?: Record<string, [number, number][]>;
 }
 
 export type Severity = "high" | "medium" | "low";
@@ -43,6 +45,12 @@ export interface OverlapAlert {
   mergeability?: MergeabilityState;
   /** dep-import only: the changed file that imports `file`. */
   importer?: string;
+  /**
+   * same-file only: whether any two sessions' changed line regions overlap.
+   * true = real collision, false = same file but disjoint regions (low),
+   * null = region data unavailable (treated as a collision).
+   */
+  regions?: boolean | null;
 }
 
 export interface ProjectInfo {

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import {
   baseUrl,
-  DaemonError,
   changedFiles,
   collectImportEdges,
+  DaemonError,
   detectOverlaps,
+  fileHunks,
   isGitRepo,
   listProjects,
   listSessions,
@@ -63,6 +64,11 @@ export async function GET(): Promise<NextResponse<ApiState>> {
         status: s.status || "",
       };
       sessions.push(session);
+      const hunks: Record<string, [number, number][]> = {};
+      for (const f of files.slice(0, 20)) {
+        hunks[f] = await fileHunks(worktreeDir, base, f);
+      }
+      session.hunks = hunks;
       imports[session.sessionId] = await collectImportEdges(files, (f) =>
         readFile(join(worktreeDir, f), "utf8"),
       );

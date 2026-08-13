@@ -11,7 +11,7 @@ export {
   sessionProject,
 } from "./ao.js";
 export type { RawSession } from "./ao.js";
-export { changedFiles, isGitRepo, mergeBase, worktreeList } from "./git.js";
+export { changedFiles, fileHunks, isGitRepo, mergeBase, mergeRanges, parseHunks, worktreeList } from "./git.js";
 export type { WorktreeEntry } from "./git.js";
 export { detectOverlaps, planMergeOrder, buildReport, leastLoadedSession, worstCi, worstMergeability } from "./engine.js";
 export { extractSpecifiers, isLocalSpec, resolveLocalSpec, collectImportEdges } from "./imports.js";

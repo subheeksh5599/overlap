@@ -13,9 +13,10 @@ import {
   worstMergeability,
 } from "../dist/engine.js";
 import { extractSpecifiers, isLocalSpec, resolveLocalSpec, collectImportEdges } from "../dist/imports.js";
+import { mergeRanges, parseHunks } from "../dist/git.js";
 
-function sess(id, files, pr = null, projectId = "overlap") {
-  return { sessionId: id, name: id, worktreeDir: `/wt/${id}`, branch: `branch-${id}`, files, projectId, pr };
+function sess(id, files, pr = null, projectId = "overlap", hunks = undefined) {
+  return { sessionId: id, name: id, worktreeDir: `/wt/${id}`, branch: `branch-${id}`, files, projectId, pr, hunks };
 }
 
 function pr(ci = "unknown", mergeability = "unknown", number = 1) {
@@ -159,6 +160,62 @@ test("worstCi / worstMergeability: worst-of across sessions", () => {
   assert.equal(worstMergeability([s1, s2, s3], ["a", "b", "c"]), "conflicting");
   assert.equal(worstCi([s1, s3], ["a", "c"]), "passing");
   assert.equal(worstCi([s1], ["missing"]), "unknown");
+});
+
+/* --- region-aware same-file detection ----------------------------------- */
+
+test("parseHunks: parses unified=0 hunks into new-side ranges", () => {
+  const out = parseHunks("@@ -1,5 +1,5 @@\n@@ -20,0 +25,3 @@\n@@ -40,1 +45,1 @@");
+  assert.deepEqual(out, [
+    [1, 5],
+    [25, 27],
+    [45, 45],
+  ]);
+});
+
+test("mergeRanges: merges overlapping and adjacent ranges", () => {
+  assert.deepEqual(mergeRanges([[1, 3], [3, 5], [10, 12]]), [
+    [1, 5],
+    [10, 12],
+  ]);
+  assert.deepEqual(mergeRanges([]), []);
+});
+
+test("detectOverlaps: same file with overlapping regions -> high same-file", () => {
+  const a = sess("a", ["src/x.ts"], null, "overlap", { "src/x.ts": [[10, 20]] });
+  const b = sess("b", ["src/x.ts"], null, "overlap", { "src/x.ts": [[15, 25]] });
+  const alerts = detectOverlaps([a, b]);
+  const alert = alerts.find((x) => x.kind === "same-file");
+  assert.equal(alert.severity, "high");
+  assert.equal(alert.regions, true);
+});
+
+test("detectOverlaps: same file with disjoint regions -> low same-file", () => {
+  const a = sess("a", ["src/x.ts"], null, "overlap", { "src/x.ts": [[10, 20]] });
+  const b = sess("b", ["src/x.ts"], null, "overlap", { "src/x.ts": [[40, 50]] });
+  const alerts = detectOverlaps([a, b]);
+  const alert = alerts.find((x) => x.kind === "same-file");
+  assert.equal(alert.severity, "low");
+  assert.equal(alert.regions, false);
+});
+
+test("detectOverlaps: any overlapping pair keeps same-file high across 3 sessions", () => {
+  const a = sess("a", ["src/x.ts"], null, "overlap", { "src/x.ts": [[10, 20]] });
+  const b = sess("b", ["src/x.ts"], null, "overlap", { "src/x.ts": [[40, 50]] });
+  const c = sess("c", ["src/x.ts"], null, "overlap", { "src/x.ts": [[45, 60]] });
+  const alerts = detectOverlaps([a, b, c]);
+  const alert = alerts.find((x) => x.kind === "same-file");
+  assert.equal(alert.severity, "high", "b/c overlap outweighs the a/b disjoint pair");
+  assert.equal(alert.regions, true);
+});
+
+test("detectOverlaps: missing hunks still assume the worst (high)", () => {
+  const a = sess("a", ["src/x.ts"]);
+  const b = sess("b", ["src/x.ts"]);
+  const alerts = detectOverlaps([a, b]);
+  const alert = alerts.find((x) => x.kind === "same-file");
+  assert.equal(alert.severity, "high");
+  assert.equal(alert.regions, null);
 });
 
 /* --- fix routing --------------------------------------------------------- */

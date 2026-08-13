@@ -8,7 +8,7 @@ import { join } from "path";
 
 import { baseUrl, listProjects, listSessions, sessionPr, sessionProject, sessionWorktreeDir } from "./ao.js";
 import type { RawSession } from "./ao.js";
-import { changedFiles, isGitRepo, mergeBase } from "./git.js";
+import { changedFiles, fileHunks, isGitRepo, mergeBase } from "./git.js";
 import { buildReport, detectOverlaps, leastLoadedSession, planMergeOrder } from "./engine.js";
 import { collectImportEdges } from "./imports.js";
 import type { ImportGraph, OverlapAlert, ProjectInfo, SessionFiles } from "./types.js";
@@ -66,6 +66,13 @@ async function loadSessions(projectFilter = ""): Promise<LoadedSessions> {
       pr: sessionPr(s),
     };
     sessions.push(session);
+    // Changed line ranges per file — lets the engine tell real collisions
+    // (overlapping regions) from harmless same-file edits (disjoint regions).
+    const hunks: Record<string, [number, number][]> = {};
+    for (const f of files.slice(0, 20)) {
+      hunks[f] = await fileHunks(worktreeDir, base, f);
+    }
+    session.hunks = hunks;
     imports[session.sessionId] = await collectImportEdges(files, (f) => readFile(join(worktreeDir, f), "utf8"));
   }
   return { sessions, projects, raw, imports };
@@ -95,8 +102,9 @@ function printAlerts(alerts: OverlapAlert[]): void {
       .map((b) => `[${b}]`)
       .join(" ");
     const importer = a.kind === "dep-import" && a.importer ? ` (imported by ${a.importer})` : "";
+    const regionNote = a.kind === "same-file" && a.regions === false ? " (no overlapping regions)" : "";
     console.log(
-      `  [${SEV_LABEL[a.severity]}] ${KIND_LABEL[a.kind]}: ${a.file}${importer} (sessions: ${a.sessionIds.join(", ")})${badges ? ` ${badges}` : ""}`,
+      `  [${SEV_LABEL[a.severity]}] ${KIND_LABEL[a.kind]}: ${a.file}${importer}${regionNote} (sessions: ${a.sessionIds.join(", ")})${badges ? ` ${badges}` : ""}`,
     );
   }
   console.log();
@@ -182,6 +190,7 @@ function printJsonStatus(baseUrl: string, sessions: SessionFiles[], alerts: Over
     ci: a.ci ?? "unknown",
     mergeability: a.mergeability ?? "unknown",
     importer: a.importer ?? null,
+    regions: a.regions ?? null,
   }));
   console.log(
     JSON.stringify({ daemon: baseUrl, sessions: sessionList, alerts: alertList, mergeOrder: mergeOrder }),
