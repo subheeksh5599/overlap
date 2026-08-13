@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// demo-b2 radar scene
 // demo-a2 radar scene
 /* cli.ts — bin `overlap`: status, watch, report, export, route. */
 
