@@ -44,7 +44,7 @@ Built for **The Orchestra** — Agent Orchestrator's first online hackathon. Apa
 - [Deploy](#deploy)
 - [Project layout](#project-layout)
 - [Tech stack](#tech-stack)
-- [Roadmap](#roadmap)
+- [What's next](#whats-next)
 - [License](#license)
 
 ---
@@ -97,7 +97,7 @@ Existing tools work *after* the merge: git's conflict markers, GitHub's mergeabi
 
 ## How Overlap works
 
-Five stages, all deterministic, all local.
+Six stages, all deterministic, all local.
 
 ### 1 · Read — sessions from the AO daemon
 
@@ -128,6 +128,15 @@ Deterministic rules, no LLM:
 | medium | dep-import | a session's changed file imports a module another session is editing (path-level import graph) |
 | low | same-module | the same basename appears in 2+ sessions in different directories, no same-file alert on it |
 
+Every alert also carries the **worst CI state and mergeability among the sessions involved**, read from the daemon's per-session PR facts — so "collides AND CI failing" outranks "collides but green", and the CLI prints `[CI FAILING]` / `[MERGE CONFLICTING]` badges:
+
+```bash
+$ npm run cli -- status
+Overlap alerts: 2
+  [HIGH] SAME FILE: packages/overlap-core/src/cli.ts (sessions: overlap-24, overlap-27) [CI FAILING] [MERGE BLOCKED]
+  [MEDIUM] DEP IMPORT: packages/overlap-core/src/engine.ts (imported by packages/overlap-core/src/cli.ts) (sessions: overlap-27, overlap-24) [CI FAILING] [MERGE BLOCKED]
+```
+
 ### 4 · Plan — merge order
 
 A greedy planner repeatedly picks the remaining session whose file set shares the fewest files with the others, so shared-file merges happen last:
@@ -146,6 +155,23 @@ Post-merge report:
 branch-a: no conflicting files
 branch-b: src/x.ts
 ```
+
+### 6 · Route — fix routing
+
+```bash
+$ npm run cli -- route
+Routing resolution to least-loaded session: demo-b2 (1 files touched)
+
+Fix task for AO session "demo-b2" (overlap-27)
+Collisions involving this session (ao/overlap-27/root):
+  [HIGH] SAME FILE: packages/overlap-core/src/cli.ts — sessions overlap-24, overlap-27 [CI FAILING]
+Resolution:
+  Rebase ao/overlap-27/root onto the current base, resolve the conflicts in the
+  files above (keep both features), rebuild, and re-run the full test suite.
+  Push the resolved branch so the PR updates.
+```
+
+The radar picks the least-loaded session involved in an alert (fewest touched files) and emits a deterministic resolution task — rebase, resolve the flagged files, rebuild, re-run tests — ready to paste into the AO session.
 
 ---
 
@@ -171,8 +197,9 @@ branch-b: src/x.ts
 |---|---|---|
 | ao.ts | TypeScript, fetch | AO daemon client: sessions, projects, worktree derivation |
 | git.ts | Node child_process (execFile) | merge-base, changed-file sets, worktree list — no shell |
-| engine.ts | TypeScript, pure functions | `detectOverlaps`, `planMergeOrder`, `buildReport` |
-| cli.ts | Node | `overlap status` / `watch` / `report` with `--json` |
+| engine.ts | TypeScript, pure functions | `detectOverlaps` (CI/mergeability-aware ranking), `planMergeOrder`, `buildReport`, `leastLoadedSession` |
+| imports.ts | TypeScript, pure functions | path-level import extraction for `dep-import` alerts |
+| cli.ts | Node | `overlap status` / `watch` / `report` / `export` / `route`; `--json` / `--stats` / `--project <id>` |
 | apps/dashboard | Next.js 15, React 19 | landing + radar UI; `/api/state` composes live daemon data |
 
 ---
@@ -195,21 +222,24 @@ branch-b: src/x.ts
 
 | Feature | Status | Detail |
 |---|---|---|
-| Overlap detection | ✅ Real | high/medium/low rules, 11 unit tests |
+| Overlap detection | ✅ Real | high/medium/low rules incl. dep-import, 24 unit tests |
 | CLI (`status`/`watch`/`report`, `--json`) | ✅ Real | verified live against the daemon |
 | Merge-order planner | ✅ Real | used for the real merge sequence in the build |
 | Reviewer confirmation | ✅ Real | a reviewer session confirmed the cli.ts collision the radar predicted |
+| CI-aware alerts | ✅ Real | reads daemon per-session PR facts (ci, mergeability, failing checks); badges in CLI + dashboard |
+| dep-import detection | ✅ Real | path-level import graph — a change importing a module another session edits is flagged medium |
+| Fix routing (`route`) | ✅ Real | emits a deterministic fix task for the least-loaded session |
+| Multi-project (`--project`) | ✅ Real | status / watch / export / route scoped to one registered AO project |
 | Live dashboard | ✅ Real | deployed; `/api/state` reads the real daemon (honest error when it's down) |
 | Fresh-clone build | ✅ Real | `npm install && npm run build && npm test` verified on a clean clone |
-| Conflict *prediction* | ⚠️ File-level | overlap detection is path heuristics, not semantic analysis — two agents editing different parts of the same file still count as a collision |
+| Conflict *prediction* | ⚠️ Path-level | overlap detection is path + import-graph heuristics, not full semantic analysis — two agents editing different parts of the same file still count as a collision |
 | Daemon API stability | ⚠️ Internal | the AO `/api/v1` surface may change between AO releases |
-| Screenshots in README | ❌ None | kept out on purpose; the dashboard is live to verify against |
 
 ---
 
 ## Tests
 
-11/11 passing — `node:test` over the engine (detection rules, dedup, planner, report builder). Full output:
+24/24 passing — `node:test` over two suites: the engine (detection rules, dedup, planner, report builder) and the roadmap features (dep-import, CI-aware ranking, fix routing, import extraction). Full output:
 
 ```
 ✔ detectOverlaps: same file touched by two sessions -> high same-file
@@ -223,6 +253,19 @@ branch-b: src/x.ts
 ✔ planMergeOrder: single session
 ✔ planMergeOrder: empty input
 ✔ buildReport: lists conflicting files per merged branch
+✔ extractSpecifiers: ESM, export-from, require, dynamic import
+✔ isLocalSpec: only relative specifiers
+✔ resolveLocalSpec: resolves relative paths and strips extensions
+✔ collectImportEdges: maps changed files to resolved local deps only
+✔ collectImportEdges: read errors contribute no edges
+✔ detectOverlaps: session importing a module another session edits -> medium dep-import
+✔ detectOverlaps: dep-import suppressed when a same-file alert covers the module
+✔ detectOverlaps: dep-import is deduped per module and session pair
+✔ detectOverlaps: package specifiers never create dep-import alerts
+✔ detectOverlaps: collides AND ci failing outranks collides but green
+✔ detectOverlaps: mergeability conflicting outranks mergeable at equal CI
+✔ worstCi / worstMergeability: worst-of across sessions
+✔ leastLoadedSession: fewest files, then name
 ```
 
 ---
@@ -243,6 +286,9 @@ CLI (requires an AO daemon running):
 npm run cli -- status          # per-session file sets + alerts + suggested merge order
 npm run cli -- watch           # poll every 5s, print new alerts
 npm run cli -- report m.json   # post-merge report from a merge-records file
+npm run cli -- route           # fix task for the least-loaded session in an alert
+npm run cli -- export out.json # full radar state as JSON (sessions, alerts, merge order)
+npm run cli -- status --project <id>  # scope to one registered AO project
 npm run cli -- status --json   # machine-readable output
 ```
 
@@ -278,8 +324,8 @@ The project is configured as a monorepo: `buildCommand: npm run build`, `outputD
 ```
 overlap/
 ├── packages/overlap-core/
-│   ├── src/                   # ao.ts, git.ts, engine.ts, cli.ts, index.ts, types.ts
-│   └── test/                  # engine.test.js (node:test, 11 tests)
+│   ├── src/                   # ao.ts, git.ts, engine.ts, imports.ts, cli.ts, index.ts, types.ts
+│   └── test/                  # engine.test.js + roadmap.test.js (node:test, 24 tests)
 ├── apps/dashboard/
 │   └── src/
 │       ├── app/               # page.tsx (landing + radar), api/state/route.ts
@@ -302,12 +348,16 @@ overlap/
 
 ---
 
-## Roadmap
+## What's next
 
-- **Semantic overlap** — *implemented (v1)*: path-level import-graph analysis (`dep-import` alerts). When session A's changed file imports a module session B is editing, the radar flags it as a medium alert — module edits that do collide, beyond plain paths. Package imports and tsconfig aliases are intentionally out of scope (a dep edge is only claimed when provable from the path).
-- **Automated fix routing** — *implemented (v1)*: `overlap route` picks the least-loaded session involved in alerts (fewest touched files) and emits a deterministic resolution task — rebase, resolve the flagged files, rebuild, re-run tests — ready to paste into the AO session.
-- **CI-aware alerts** — *implemented*: the radar reads the AO daemon's per-session PR facts (`prs[].ci`, `prs[].mergeability`, failing checks) and ranks alerts so "collides AND CI failing" outranks "collides but green"; the CLI prints `[CI FAILING]` / `[MERGE CONFLICTING]` badges and the dashboard shows the same context.
-- **Multi-project view** — *implemented*: sessions carry `projectId`, `status` output groups by project, and `--project <id>` filters status / watch / export / route to a single registered AO project.
+The four original roadmap items are shipped: dep-import (semantic overlap), CI-aware alerts, multi-project view, and fix routing. Honest next steps:
+
+- **Full semantic overlap** — real module-graph resolution (tsconfig paths, index resolution, package entry points) instead of path-level imports
+- **Automated routing** — inject the fix task into the least-loaded session through the daemon's conversation API instead of printing it
+- **CI-run source** — surface per-check state (which check failed, with a link) from GitHub check-runs rather than aggregate PR state
+- **Watchdog mode** — `overlap watch` pushing the first collision alert to a desktop notification / webhook
+
+The radar stays deterministic — no LLM calls anywhere in the pipeline.
 
 ---
 
